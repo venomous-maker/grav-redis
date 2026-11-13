@@ -44,7 +44,7 @@ namespace redis {
         // pipeline encodes many commands into one buffer this way before sending
         // any of them (one write() for the whole batch, not one per command).
         static fn encodeCommand(sb: StringBuilder, name: string, args: Array<any>) {
-            sb.append("*").append("${args.size() + 1}").append("\r\n");
+            sb.appendChar(42).appendInt(args.size() + 1).append("\r\n");   // '*'
             Resp.writeBulk(sb, name);
             for (a in args) { Resp.writeBulk(sb, Resp.text(a)); }
         }
@@ -55,7 +55,22 @@ namespace redis {
             conn.write(sb.toString());
         }
         private static fn writeBulk(sb: StringBuilder, a: string) {
-            sb.append("$").append("${a.length}").append("\r\n").append(a).append("\r\n");
+            sb.appendChar(36).appendInt(a.length).append("\r\n").append(a).append("\r\n");   // '$'
+        }
+        // The signed number after a reply line's type byte (":42", "$-1", "*3"),
+        // read in place: no slice of the line just to parse it.
+        private static fn header(line: string) -> long {
+            let i = 1;
+            let neg = line.length > 1 && line[1] == ('-' as byte);
+            if (neg) { i = 2; }
+            let v: long = 0;
+            while (i < line.length) {
+                let c = line[i] as int;
+                if (c < 48 || c > 57) { throw new NetError("not a RESP number: '${line}'"); }
+                v = v * 10 + (c - 48);
+                i += 1;
+            }
+            return neg ? -v : v;
         }
         // Reads one reply; throws RedisError for a `-ERR ...` one.
         static fn readReply(conn: TcpStream) -> any {
@@ -63,22 +78,18 @@ namespace redis {
             if (line == "" && conn.eof()) { throw new NetError("the connection closed while reading a reply"); }
             if (line.length == 0) { throw new NetError("empty reply line"); }
             let kind = line[0];
-            let rest = line[1..];
-            if (kind == ('+' as byte)) { return rest; }
-            if (kind == ('-' as byte)) { throw new RedisError(rest); }
-            if (kind == (':' as byte)) { return Integer.parseOr(rest, 0); }
+            if (kind == ('+' as byte)) { return line[1..]; }
+            if (kind == ('-' as byte)) { throw new RedisError(line[1..]); }
+            if (kind == (':' as byte)) { return Resp.header(line); }
             if (kind == ('$' as byte)) {
-                let n = Integer.parseOr(rest, -1) as int;
+                let n = Resp.header(line) as int;
                 if (n < 0) { return null; }
-                let data = conn.readExactly(n);
-                let text = data.toString();
-                free(data);
-                let crlf = conn.readExactly(2);          // the trailing "\r\n", discarded
-                free(crlf);
+                let text = conn.readText(n);
+                conn.skip(2);                            // the trailing "\r\n"
                 return text;
             }
             if (kind == ('*' as byte)) {
-                let n = Integer.parseOr(rest, -1) as int;
+                let n = Resp.header(line) as int;
                 if (n < 0) { return null; }
                 let out = new Array<any>();
                 out.reserve(n);
