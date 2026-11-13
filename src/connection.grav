@@ -144,7 +144,7 @@ namespace redis {
 
         // ── pub/sub ───────────────────────────────────────────────────────────────
         // The number of subscribers that received it.
-        fn publish(channel: string, message: string) -> long { return Integer.parseOr("${self.command("PUBLISH", [channel, message])}", 0); }
+        fn publish(channel: string, message: string) -> long { return RedisConnection.toLong(self.command("PUBLISH", [channel, message]), 0); }
         // Subscribes to `channels` and calls `onMessage(channel, payload)` for each
         // one published, forever (until unsubscribed from elsewhere, or the
         // connection closes) — this call does not return. Give this connection to
@@ -195,15 +195,15 @@ namespace redis {
         fn ping() -> string { return "${self.command("PING")}"; }
         fn echo(message: string) -> string { return "${self.command("ECHO", [message])}"; }
         fn select(db: int) { self.command("SELECT", [db]); }
-        fn dbSize() -> long { return Integer.parseOr("${self.command("DBSIZE")}", 0); }
+        fn dbSize() -> long { return RedisConnection.toLong(self.command("DBSIZE"), 0); }
         // Deletes every key of the current database. Of every database: flushAll().
         fn flushDb() { self.command("FLUSHDB"); }
         fn flushAll() { self.command("FLUSHALL"); }
 
         // ── keys ──────────────────────────────────────────────────────────────────
-        fn del(keys: Array<string>) -> long { let a = new Array<any>(); for (k in keys) { a.push(k); } return Integer.parseOr("${self.command("DEL", a)}", 0); }
+        fn del(keys: Array<string>) -> long { let a = new Array<any>(); for (k in keys) { a.push(k); } return RedisConnection.toLong(self.command("DEL", a), 0); }
         fn del(key: string) -> long { let a = new Array<string>(); a.push(key); return self.del(a); }
-        fn exists(keys: Array<string>) -> long { let a = new Array<any>(); for (k in keys) { a.push(k); } return Integer.parseOr("${self.command("EXISTS", a)}", 0); }
+        fn exists(keys: Array<string>) -> long { let a = new Array<any>(); for (k in keys) { a.push(k); } return RedisConnection.toLong(self.command("EXISTS", a), 0); }
         fn exists(key: string) -> bool { return self.exists1(key) > 0; }
         private fn exists1(key: string) -> long { let a = new Array<string>(); a.push(key); return self.exists(a); }
         fn expire(key: string, seconds: long) -> bool { return self.command("EXPIRE", [key, seconds]) == 1; }
@@ -211,8 +211,8 @@ namespace redis {
         fn expireAt(key: string, unixSeconds: long) -> bool { return self.command("EXPIREAT", [key, unixSeconds]) == 1; }
         fn persist(key: string) -> bool { return self.command("PERSIST", [key]) == 1; }
         // Seconds left, -1 for no expiry, -2 for no such key.
-        fn ttl(key: string) -> long { return Integer.parseOr("${self.command("TTL", [key])}", -2); }
-        fn pTtl(key: string) -> long { return Integer.parseOr("${self.command("PTTL", [key])}", -2); }
+        fn ttl(key: string) -> long { return RedisConnection.toLong(self.command("TTL", [key]), -2); }
+        fn pTtl(key: string) -> long { return RedisConnection.toLong(self.command("PTTL", [key]), -2); }
         // "string", "list", "set", "zset", "hash", "stream" or "none" (no such key).
         fn keyType(key: string) -> string { return "${self.command("TYPE", [key])}"; }
         fn keys(pattern: string) -> Array<string> { return RedisConnection.strings(self.command("KEYS", [pattern]) as Array<any>); }
@@ -220,7 +220,7 @@ namespace redis {
         // (0 when done) and this step's keys; start with cursor 0.
         fn scan(cursor: long, pattern: string = "*", count: int = 100) -> Pair<long, Array<string>> {
             let r = self.command("SCAN", [cursor, "MATCH", pattern, "COUNT", count]) as Array<any>;
-            return new Pair<long, Array<string>>(Integer.parseOr("${r[0]}", 0), RedisConnection.strings(r[1] as Array<any>));
+            return new Pair<long, Array<string>>(RedisConnection.toLong(r[0], 0), RedisConnection.strings(r[1] as Array<any>));
         }
         fn rename(key: string, newKey: string) { self.command("RENAME", [key, newKey]); }
         fn renameNx(key: string, newKey: string) -> bool { return self.command("RENAMENX", [key, newKey]) == 1; }
@@ -250,12 +250,12 @@ namespace redis {
         fn getSet(key: string, value: any) -> string? { return RedisConnection.orNull(self.command("GETSET", [key, value])); }
         // GETDEL: the value, removing the key.
         fn getDel(key: string) -> string? { return RedisConnection.orNull(self.command("GETDEL", [key])); }
-        fn append(key: string, value: string) -> long { return Integer.parseOr("${self.command("APPEND", [key, value])}", 0); }
-        fn strLen(key: string) -> long { return Integer.parseOr("${self.command("STRLEN", [key])}", 0); }
-        fn incr(key: string) -> long { return Integer.parseOr("${self.command("INCR", [key])}", 0); }
-        fn decr(key: string) -> long { return Integer.parseOr("${self.command("DECR", [key])}", 0); }
-        fn incrBy(key: string, by: long) -> long { return Integer.parseOr("${self.command("INCRBY", [key, by])}", 0); }
-        fn decrBy(key: string, by: long) -> long { return Integer.parseOr("${self.command("DECRBY", [key, by])}", 0); }
+        fn append(key: string, value: string) -> long { return RedisConnection.toLong(self.command("APPEND", [key, value]), 0); }
+        fn strLen(key: string) -> long { return RedisConnection.toLong(self.command("STRLEN", [key]), 0); }
+        fn incr(key: string) -> long { return RedisConnection.toLong(self.command("INCR", [key]), 0); }
+        fn decr(key: string) -> long { return RedisConnection.toLong(self.command("DECR", [key]), 0); }
+        fn incrBy(key: string, by: long) -> long { return RedisConnection.toLong(self.command("INCRBY", [key, by]), 0); }
+        fn decrBy(key: string, by: long) -> long { return RedisConnection.toLong(self.command("DECRBY", [key, by]), 0); }
         fn incrByFloat(key: string, by: double) -> double { return Format.toFloatOr("${self.command("INCRBYFLOAT", [key, by])}", 0.0); }
         // The matching keys' values, in order; a missing key's slot is null.
         fn mGet(keys: Array<string>) -> Array<string?> {
@@ -270,20 +270,20 @@ namespace redis {
             for (k in values.keys()) { a.push(k); a.push(values[k]); }
             self.command("MSET", a);
         }
-        fn setBit(key: string, offset: long, value: int) -> long { return Integer.parseOr("${self.command("SETBIT", [key, offset, value])}", 0); }
-        fn getBit(key: string, offset: long) -> long { return Integer.parseOr("${self.command("GETBIT", [key, offset])}", 0); }
-        fn bitCount(key: string) -> long { return Integer.parseOr("${self.command("BITCOUNT", [key])}", 0); }
+        fn setBit(key: string, offset: long, value: int) -> long { return RedisConnection.toLong(self.command("SETBIT", [key, offset, value]), 0); }
+        fn getBit(key: string, offset: long) -> long { return RedisConnection.toLong(self.command("GETBIT", [key, offset]), 0); }
+        fn bitCount(key: string) -> long { return RedisConnection.toLong(self.command("BITCOUNT", [key]), 0); }
 
         // ── hashes ────────────────────────────────────────────────────────────────
         fn hGet(key: string, field: string) -> string? { return RedisConnection.orNull(self.command("HGET", [key, field])); }
-        fn hSet(key: string, field: string, value: any) -> long { return Integer.parseOr("${self.command("HSET", [key, field, value])}", 0); }
+        fn hSet(key: string, field: string, value: any) -> long { return RedisConnection.toLong(self.command("HSET", [key, field, value]), 0); }
         fn hSet(key: string, values: HashMap<string, any>) -> long {
             let a = new Array<any>(); a.push(key);
             for (k in values.keys()) { a.push(k); a.push(values[k]); }
-            return Integer.parseOr("${self.command("HSET", a)}", 0);
+            return RedisConnection.toLong(self.command("HSET", a), 0);
         }
         fn hSetNx(key: string, field: string, value: any) -> bool { return self.command("HSETNX", [key, field, value]) == 1; }
-        fn hDel(key: string, fields: Array<string>) -> long { let a = new Array<any>(); a.push(key); for (f in fields) { a.push(f); } return Integer.parseOr("${self.command("HDEL", a)}", 0); }
+        fn hDel(key: string, fields: Array<string>) -> long { let a = new Array<any>(); a.push(key); for (f in fields) { a.push(f); } return RedisConnection.toLong(self.command("HDEL", a), 0); }
         fn hExists(key: string, field: string) -> bool { return self.command("HEXISTS", [key, field]) == 1; }
         fn hGetAll(key: string) -> HashMap<string, string> {
             let r = self.command("HGETALL", [key]) as Array<any>;
@@ -293,8 +293,8 @@ namespace redis {
         }
         fn hKeys(key: string) -> Array<string> { return RedisConnection.strings(self.command("HKEYS", [key]) as Array<any>); }
         fn hVals(key: string) -> Array<string> { return RedisConnection.strings(self.command("HVALS", [key]) as Array<any>); }
-        fn hLen(key: string) -> long { return Integer.parseOr("${self.command("HLEN", [key])}", 0); }
-        fn hIncrBy(key: string, field: string, by: long) -> long { return Integer.parseOr("${self.command("HINCRBY", [key, field, by])}", 0); }
+        fn hLen(key: string) -> long { return RedisConnection.toLong(self.command("HLEN", [key]), 0); }
+        fn hIncrBy(key: string, field: string, by: long) -> long { return RedisConnection.toLong(self.command("HINCRBY", [key, field, by]), 0); }
         fn hIncrByFloat(key: string, field: string, by: double) -> double { return Format.toFloatOr("${self.command("HINCRBYFLOAT", [key, field, by])}", 0.0); }
         // The matching fields' values, in order; a missing field's slot is null.
         fn hMGet(key: string, fields: Array<string>) -> Array<string?> {
@@ -306,20 +306,20 @@ namespace redis {
         }
 
         // ── lists ─────────────────────────────────────────────────────────────────
-        fn lPush(key: string, values: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (v in values) { a.push(v); } return Integer.parseOr("${self.command("LPUSH", a)}", 0); }
+        fn lPush(key: string, values: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (v in values) { a.push(v); } return RedisConnection.toLong(self.command("LPUSH", a), 0); }
         fn lPush(key: string, value: any) -> long { let a = new Array<any>(); a.push(value); return self.lPush(key, a); }
-        fn rPush(key: string, values: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (v in values) { a.push(v); } return Integer.parseOr("${self.command("RPUSH", a)}", 0); }
+        fn rPush(key: string, values: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (v in values) { a.push(v); } return RedisConnection.toLong(self.command("RPUSH", a), 0); }
         fn rPush(key: string, value: any) -> long { let a = new Array<any>(); a.push(value); return self.rPush(key, a); }
         fn lPop(key: string) -> string? { return RedisConnection.orNull(self.command("LPOP", [key])); }
         fn rPop(key: string) -> string? { return RedisConnection.orNull(self.command("RPOP", [key])); }
         fn lRange(key: string, start: long, stop: long) -> Array<string> { return RedisConnection.strings(self.command("LRANGE", [key, start, stop]) as Array<any>); }
-        fn lLen(key: string) -> long { return Integer.parseOr("${self.command("LLEN", [key])}", 0); }
+        fn lLen(key: string) -> long { return RedisConnection.toLong(self.command("LLEN", [key]), 0); }
         fn lIndex(key: string, index: long) -> string? { return RedisConnection.orNull(self.command("LINDEX", [key, index])); }
         fn lSet(key: string, index: long, value: any) { self.command("LSET", [key, index, value]); }
-        fn lRem(key: string, count: long, value: any) -> long { return Integer.parseOr("${self.command("LREM", [key, count, value])}", 0); }
+        fn lRem(key: string, count: long, value: any) -> long { return RedisConnection.toLong(self.command("LREM", [key, count, value]), 0); }
         fn lTrim(key: string, start: long, stop: long) { self.command("LTRIM", [key, start, stop]); }
-        fn lInsertBefore(key: string, pivot: any, value: any) -> long { return Integer.parseOr("${self.command("LINSERT", [key, "BEFORE", pivot, value])}", 0); }
-        fn lInsertAfter(key: string, pivot: any, value: any) -> long { return Integer.parseOr("${self.command("LINSERT", [key, "AFTER", pivot, value])}", 0); }
+        fn lInsertBefore(key: string, pivot: any, value: any) -> long { return RedisConnection.toLong(self.command("LINSERT", [key, "BEFORE", pivot, value]), 0); }
+        fn lInsertAfter(key: string, pivot: any, value: any) -> long { return RedisConnection.toLong(self.command("LINSERT", [key, "AFTER", pivot, value]), 0); }
         fn rPopLPush(source: string, destination: string) -> string? { return RedisConnection.orNull(self.command("RPOPLPUSH", [source, destination])); }
         // Waits up to `timeoutSeconds` (0: forever) for an item; [key, value], or null.
         fn blPop(keys: Array<string>, timeoutSeconds: long) -> Array<string> {
@@ -334,12 +334,12 @@ namespace redis {
         }
 
         // ── sets ──────────────────────────────────────────────────────────────────
-        fn sAdd(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return Integer.parseOr("${self.command("SADD", a)}", 0); }
+        fn sAdd(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return RedisConnection.toLong(self.command("SADD", a), 0); }
         fn sAdd(key: string, member: any) -> long { let a = new Array<any>(); a.push(member); return self.sAdd(key, a); }
-        fn sRem(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return Integer.parseOr("${self.command("SREM", a)}", 0); }
+        fn sRem(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return RedisConnection.toLong(self.command("SREM", a), 0); }
         fn sMembers(key: string) -> Array<string> { return RedisConnection.strings(self.command("SMEMBERS", [key]) as Array<any>); }
         fn sIsMember(key: string, member: any) -> bool { return self.command("SISMEMBER", [key, member]) == 1; }
-        fn sCard(key: string) -> long { return Integer.parseOr("${self.command("SCARD", [key])}", 0); }
+        fn sCard(key: string) -> long { return RedisConnection.toLong(self.command("SCARD", [key]), 0); }
         fn sPop(key: string) -> string? { return RedisConnection.orNull(self.command("SPOP", [key])); }
         fn sRandMember(key: string) -> string? { return RedisConnection.orNull(self.command("SRANDMEMBER", [key])); }
         fn sUnion(keys: Array<string>) -> Array<string> { let a = new Array<any>(); for (k in keys) { a.push(k); } return RedisConnection.strings(self.command("SUNION", a) as Array<any>); }
@@ -348,24 +348,24 @@ namespace redis {
         fn sMove(source: string, destination: string, member: any) -> bool { return self.command("SMOVE", [source, destination, member]) == 1; }
 
         // ── sorted sets ───────────────────────────────────────────────────────────
-        fn zAdd(key: string, score: double, member: any) -> long { return Integer.parseOr("${self.command("ZADD", [key, score, member])}", 0); }
+        fn zAdd(key: string, score: double, member: any) -> long { return RedisConnection.toLong(self.command("ZADD", [key, score, member]), 0); }
         fn zAdd(key: string, scored: HashMap<string, double>) -> long {
             let a = new Array<any>(); a.push(key);
             for (m in scored.keys()) { a.push(scored[m]); a.push(m); }
-            return Integer.parseOr("${self.command("ZADD", a)}", 0);
+            return RedisConnection.toLong(self.command("ZADD", a), 0);
         }
-        fn zRem(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return Integer.parseOr("${self.command("ZREM", a)}", 0); }
+        fn zRem(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return RedisConnection.toLong(self.command("ZREM", a), 0); }
         fn zScore(key: string, member: any) -> double { let r = self.command("ZSCORE", [key, member]); return r == null ? 0.0 : Format.toFloatOr("${r}", 0.0); }
         fn zIncrBy(key: string, by: double, member: any) -> double { return Format.toFloatOr("${self.command("ZINCRBY", [key, by, member])}", 0.0); }
-        fn zCard(key: string) -> long { return Integer.parseOr("${self.command("ZCARD", [key])}", 0); }
-        fn zCount(key: string, min: double, max: double) -> long { return Integer.parseOr("${self.command("ZCOUNT", [key, min, max])}", 0); }
-        fn zRank(key: string, member: any) -> long { let r = self.command("ZRANK", [key, member]); return r == null ? -1 : Integer.parseOr("${r}", -1); }
-        fn zRevRank(key: string, member: any) -> long { let r = self.command("ZREVRANK", [key, member]); return r == null ? -1 : Integer.parseOr("${r}", -1); }
+        fn zCard(key: string) -> long { return RedisConnection.toLong(self.command("ZCARD", [key]), 0); }
+        fn zCount(key: string, min: double, max: double) -> long { return RedisConnection.toLong(self.command("ZCOUNT", [key, min, max]), 0); }
+        fn zRank(key: string, member: any) -> long { let r = self.command("ZRANK", [key, member]); return RedisConnection.toLong(r, -1); }
+        fn zRevRank(key: string, member: any) -> long { let r = self.command("ZREVRANK", [key, member]); return RedisConnection.toLong(r, -1); }
         fn zRange(key: string, start: long, stop: long) -> Array<string> { return RedisConnection.strings(self.command("ZRANGE", [key, start, stop]) as Array<any>); }
         fn zRevRange(key: string, start: long, stop: long) -> Array<string> { return RedisConnection.strings(self.command("ZREVRANGE", [key, start, stop]) as Array<any>); }
         fn zRangeByScore(key: string, min: double, max: double) -> Array<string> { return RedisConnection.strings(self.command("ZRANGEBYSCORE", [key, min, max]) as Array<any>); }
-        fn zRemRangeByRank(key: string, start: long, stop: long) -> long { return Integer.parseOr("${self.command("ZREMRANGEBYRANK", [key, start, stop])}", 0); }
-        fn zRemRangeByScore(key: string, min: double, max: double) -> long { return Integer.parseOr("${self.command("ZREMRANGEBYSCORE", [key, min, max])}", 0); }
+        fn zRemRangeByRank(key: string, start: long, stop: long) -> long { return RedisConnection.toLong(self.command("ZREMRANGEBYRANK", [key, start, stop]), 0); }
+        fn zRemRangeByScore(key: string, min: double, max: double) -> long { return RedisConnection.toLong(self.command("ZREMRANGEBYSCORE", [key, min, max]), 0); }
         fn zPopMin(key: string) -> Array<string> { return RedisConnection.strings(self.command("ZPOPMIN", [key]) as Array<any>); }
         fn zPopMax(key: string) -> Array<string> { return RedisConnection.strings(self.command("ZPOPMAX", [key]) as Array<any>); }
 
@@ -375,6 +375,12 @@ namespace redis {
             let out = new Array<string>();
             for (x in r) { out.push("${x}"); }
             return out;
+        }
+        // An integer reply as it came (a long already), or a numeric one sent as
+        // text (r[0] of a SCAN, say) parsed; `otherwise` for anything else.
+        private static fn toLong(r: any, otherwise: long) -> long {
+            if (r is long) { return r as long; }
+            return r == null ? otherwise : Integer.parseOr("${r}", otherwise);
         }
         private static fn orNull(r: any) -> string? { return r == null ? null : "${r}"; }
         private static fn orEmpty(r: any) -> string { return r == null ? "" : "${r}"; }
