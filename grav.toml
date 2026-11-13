@@ -1,0 +1,5 @@
+name = "grav-redis"
+lib = "src/redis.grav"
+paths = ["src"]
+
+[dependencies]

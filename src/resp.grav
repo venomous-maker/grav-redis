@@ -1,0 +1,91 @@
+// resp.grav — RESP2, the wire protocol Redis speaks: encoding a command as an
+// array of bulk strings, and decoding whatever comes back into a plain Grav
+// value (long, string, bool, null, Array<any>) or a RedisError.
+//
+// A command always goes out the same way, regardless of its arguments'
+// kind: `*<argc>\r\n$<len>\r\n<bytes>\r\n...`. A reply's first byte says its
+// shape: `+` simple string, `-` error, `:` integer, `$` bulk string (binary
+// safe; `$-1` is null), `*` array (`*-1` is null). This module has no
+// connection of its own: give it the TcpStream to read and write.
+//
+// Kept to one allocation per command (one StringBuilder, one write()) and one
+// per bulk reply (no intermediate copy): a string's own `.length` is already
+// its UTF-8 byte count, so framing never needs a throwaway Bytes just to
+// measure one.
+import "std"
+import "std/net"
+
+namespace redis {
+
+    // What the server sent back for a command that failed (a `-ERR ...` reply).
+    class RedisError extends Exception {
+        // The reply's own text, after the leading `-` and its error code word
+        // ("WRONGTYPE Operation against a key holding the wrong kind of value").
+        public code: string
+        constructor(message: string) {
+            super(message);
+            let sp = Str.indexOf(message, " ");
+            self.code = sp > 0 && Str.upper(message[..sp]) == message[..sp] ? message[..sp] : "";
+        }
+        public fn kind() -> string { return "RedisError"; }
+    }
+
+    // Encodes and decodes RESP2 over a TcpStream.
+    class Resp {
+        // A value as a command argument's text: a string as it is (no copy), a
+        // bool as "1"/"0" (RESP has no boolean of its own), anything else by its
+        // own toString (numbers, Decimal, ...).
+        static fn text(v: any) -> string {
+            if (v is string) { return v as string; }
+            if (v is bool) { return (v as bool) ? "1" : "0"; }
+            return "${v}";
+        }
+        // Appends `name args...` to `sb`: `*<n>\r\n$<len>\r\n<bytes>\r\n...`. A
+        // pipeline encodes many commands into one buffer this way before sending
+        // any of them (one write() for the whole batch, not one per command).
+        static fn encodeCommand(sb: StringBuilder, name: string, args: Array<any>) {
+            sb.append("*").append("${args.size() + 1}").append("\r\n");
+            Resp.writeBulk(sb, name);
+            for (a in args) { Resp.writeBulk(sb, Resp.text(a)); }
+        }
+        // Writes one command in its own write().
+        static fn writeCommand(conn: TcpStream, name: string, args: Array<any>) {
+            let sb = new StringBuilder();
+            Resp.encodeCommand(sb, name, args);
+            conn.write(sb.toString());
+        }
+        private static fn writeBulk(sb: StringBuilder, a: string) {
+            sb.append("$").append("${a.length}").append("\r\n").append(a).append("\r\n");
+        }
+        // Reads one reply; throws RedisError for a `-ERR ...` one.
+        static fn readReply(conn: TcpStream) -> any {
+            let line = conn.readLine();
+            if (line == "" && conn.eof()) { throw new NetError("the connection closed while reading a reply"); }
+            if (line.length == 0) { throw new NetError("empty reply line"); }
+            let kind = line[0];
+            let rest = line[1..];
+            if (kind == ('+' as byte)) { return rest; }
+            if (kind == ('-' as byte)) { throw new RedisError(rest); }
+            if (kind == (':' as byte)) { return Integer.parseOr(rest, 0); }
+            if (kind == ('$' as byte)) {
+                let n = Integer.parseOr(rest, -1) as int;
+                if (n < 0) { return null; }
+                let data = conn.readExactly(n);
+                let text = data.toString();
+                free(data);
+                let crlf = conn.readExactly(2);          // the trailing "\r\n", discarded
+                free(crlf);
+                return text;
+            }
+            if (kind == ('*' as byte)) {
+                let n = Integer.parseOr(rest, -1) as int;
+                if (n < 0) { return null; }
+                let out = new Array<any>();
+                out.reserve(n);
+                for (i in 0..n) { out.push(Resp.readReply(conn)); }
+                return out;
+            }
+            throw new NetError("not a RESP reply: '${line}'");
+        }
+    }
+}

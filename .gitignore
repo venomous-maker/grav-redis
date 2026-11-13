@@ -1,0 +1,6 @@
+# test and example binaries
+/tests/*
+!/tests/*.grav
+/examples/*
+!/examples/*.grav
+*.gen.c
