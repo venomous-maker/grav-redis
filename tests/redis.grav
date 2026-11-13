@@ -1,0 +1,197 @@
+// grav-redis's tests, against the server REDIS_URL names ("redis://127.0.0.1:6379"
+// by default): strings, keys, hashes, lists, sets, sorted sets, pipelining,
+// transactions, pub/sub, scripting and the named-connection facade.
+import "std"
+import "../src/redis.grav"
+use redis.*
+
+fn url() -> string {
+    let u = env("REDIS_URL");
+    return u == "" ? "redis://127.0.0.1:6379/9" : u;
+}
+
+fn fresh() -> RedisConnection {
+    let r = RedisConnection.open(url());
+    r.flushDb();
+    return r;
+}
+
+test "strings: get, set, expiry, counters" {
+    let r = fresh();
+    assertEq(r.get("missing"), null);
+    r.set("name", "Ada");
+    assertEq(r.get("name"), "Ada");
+    assertEq(r.exists("name"), true);
+    assertEq(r.exists("nope"), false);
+    r.set("temp", "x", 60);
+    assertEq(r.ttl("temp") > 0, true);
+    r.persist("temp");
+    assertEq(r.ttl("temp"), -1);
+    assertEq("${r.set("name", "Bo", 0, 0, true, false)} ${r.get("name")}", "false Ada");  // NX: already exists
+    assertEq("${r.set("newkey", "y", 0, 0, true, false)} ${r.get("newkey")}", "true y");
+    r.set("n", "10");
+    assertEq("${r.incr("n")} ${r.incrBy("n", 5)} ${r.decr("n")}", "11 16 15");
+    assertEq(r.append("name", "!"), 4);
+    assertEq(r.get("name"), "Ada!");
+    assertEq(r.strLen("name"), 4);
+    let m1: HashMap<string, any> = new HashMap<string, any>();
+    m1.put("a", "1"); m1.put("b", "2");
+    r.mSet(m1);
+    assertEq("${r.mGet(["a", "b", "nope"])}", "[\"1\", \"2\", null]");
+    assertEq(r.getDel("a"), "1");
+    assertEq(r.exists("a"), false);
+    assertEq(r.del("b"), 1);
+    assertEq(r.keyType("name"), "string");
+    r.close();
+}
+
+test "keys: scan, rename, randomkey, copy" {
+    let r = fresh();
+    r.set("k1", "a"); r.set("k2", "b"); r.set("k3", "c");
+    let seen = new HashSet<string>();
+    let cursor = 0 as long;
+    while (true) {
+        let step = r.scan(cursor, "k*", 10);
+        for (k in step.second) { seen.add(k); }
+        cursor = step.first;
+        if (cursor == 0) { break; }
+    }
+    assertEq("${seen.size()} ${seen.contains("k1")} ${seen.contains("k2")} ${seen.contains("k3")}", "3 true true true");
+    r.rename("k1", "k1renamed");
+    assertEq("${r.exists("k1")} ${r.get("k1renamed")}", "false a");
+    assertEq(r.copy("k2", "k2copy"), true);
+    assertEq(r.get("k2copy"), "b");
+    r.close();
+}
+
+test "hashes" {
+    let r = fresh();
+    r.hSet("user:1", "name", "Ada");
+    let h1: HashMap<string, any> = new HashMap<string, any>();
+    h1.put("age", "36"); h1.put("role", "admin");
+    r.hSet("user:1", h1);
+    assertEq(r.hGet("user:1", "name"), "Ada");
+    assertEq(r.hExists("user:1", "age"), true);
+    assertEq(r.hLen("user:1"), 3);
+    let all = r.hGetAll("user:1");
+    assertEq("${all["name"]} ${all["age"]} ${all["role"]}", "Ada 36 admin");
+    assertEq("${r.hMGet("user:1", ["name", "nope"])}", "[\"Ada\", null]");
+    assertEq(r.hIncrBy("user:1", "age", 1), 37);
+    r.hDel("user:1", ["role"]);
+    assertEq(r.hExists("user:1", "role"), false);
+    r.close();
+}
+
+test "lists" {
+    let r = fresh();
+    r.rPush("q", "a"); r.rPush("q", "b"); r.lPush("q", "first");
+    assertEq("${r.lRange("q", 0, -1)}", "[\"first\", \"a\", \"b\"]");
+    assertEq(r.lLen("q"), 3);
+    assertEq(r.lPop("q"), "first");
+    assertEq(r.rPop("q"), "b");
+    assertEq("${r.lRange("q", 0, -1)}", "[\"a\"]");
+    r.close();
+}
+
+test "sets and sorted sets" {
+    let r = fresh();
+    r.sAdd("tags", "red"); r.sAdd("tags", "blue"); r.sAdd("tags", "red");
+    assertEq(r.sCard("tags"), 2);
+    assertEq(r.sIsMember("tags", "red"), true);
+    r.sRem("tags", ["red"]);
+    assertEq(r.sIsMember("tags", "red"), false);
+
+    r.zAdd("scores", 10.0, "ada");
+    r.zAdd("scores", 20.0, "bob");
+    let z1 = new HashMap<string, double>();
+    z1.put("cy", 5.0);
+    r.zAdd("scores", z1);
+    assertEq("${r.zRange("scores", 0, -1)}", "[\"cy\", \"ada\", \"bob\"]");
+    assertEq(r.zScore("scores", "bob"), 20.0);
+    assertEq(r.zRank("scores", "ada"), 1);
+    assertEq(r.zIncrBy("scores", 100.0, "cy"), 105.0);
+    assertEq("${r.zRevRange("scores", 0, 0)}", "[\"cy\"]");
+    r.close();
+}
+
+test "pipelining: one round trip, replies in order" {
+    let r = fresh();
+    let results = r.pipeline(fn(p: RedisPipeline) {
+        p.command("SET", ["a", "1"]);
+        p.command("SET", ["b", "2"]);
+        p.command("GET", ["a"]);
+        p.command("GET", ["b"]);
+    });
+    assertEq("${results[2]} ${results[3]}", "1 2");
+    r.close();
+}
+
+test "transactions: MULTI/EXEC, and a watched key aborting it" {
+    let r = fresh();
+    r.set("balance", "100");
+    let out = r.transaction(new Array<string>(), fn(tx: RedisTransaction) {
+        tx.command("DECRBY", ["balance", 10]);
+        tx.command("GET", ["balance"]);
+    });
+    assertEq("${out[0]} ${out[1]}", "90 90");
+
+    // watch() aborts the transaction (exec gives null) if the key changed first.
+    let other = RedisConnection.open(url());
+    r.watch(["balance"]);
+    let tx = r.multi();
+    tx.command("GET", ["balance"]);
+    other.set("balance", "999");                 // changes it before this exec() runs
+    let aborted = tx.exec();
+    assertEq(aborted, null);
+    other.close();
+    r.close();
+}
+
+test "pub/sub" {
+    let publisher = RedisConnection.open(url());
+    let received = new Array<string>();
+    let t = new Thread(fn() {
+        let sub = RedisConnection.open(url());
+        sub.subscribe(["news"], fn(channel: string, message: string) {
+            received.push(message);
+            throw new StateError("__stop__");     // one message is enough for this test
+        });
+    });
+    t.start();
+    Time.sleepMs(200);                            // let the subscriber's SUBSCRIBE land first
+    let n = publisher.publish("news", "hello");
+    assertEq(n, 1);
+    t.joinResult();                               // the callback's stop-throw, expected
+    assertEq("${received}", "[\"hello\"]");
+    publisher.close();
+}
+
+test "scripting: eval" {
+    let r = fresh();
+    r.eval("return redis.call('SET', KEYS[1], ARGV[1])", ["scripted"], ["ok"]);
+    assertEq(r.get("scripted"), "ok");
+    assertEq(r.eval("return 1 + 2", new Array<string>()), 3);
+    r.close();
+}
+
+test "the Redis facade: named connections" {
+    Redis.connect(RedisConnection.open(url()), "facade_test");
+    assertEq(Redis.hasConnection("facade_test"), true);
+    Redis.connection("facade_test").flushDb();
+    let msg = "";
+    try { Redis.connection("nope_at_all") } catch (e: StateError) { msg = e.message() }
+    assertEq(msg, "no Redis connection called 'nope_at_all': Redis.connect(conn, \"nope_at_all\")");
+    Redis.disconnect("facade_test");
+}
+
+test "RedisError for a bad command, and bad-URL errors" {
+    let r = fresh();
+    r.set("notalist", "x");
+    let msg = "";
+    try { r.lPush("notalist", "y") } catch (e: RedisError) { msg = e.code }
+    assertEq(msg, "WRONGTYPE");
+    let bad = "";
+    try { RedisConnection.parseUrl("http://x") } catch (e: ValueError) { bad = e.message() }
+    assertEq(bad, "not a Redis URL (redis://[:password@]host:port/database): http://x");
+    r.close();
+}
