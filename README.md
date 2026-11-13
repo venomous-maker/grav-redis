@@ -192,6 +192,12 @@ r.transaction(["balance"], fn(tx: RedisTransaction) {
 })
 ```
 
+A transaction is queued on the client and sent as one `MULTI ... EXEC` batch
+when `exec()` runs: one round trip however many commands it holds. So reads on
+the connection itself inside the callback (`r.get` above) run straight away,
+outside the transaction, and a command the server rejects surfaces as a
+`RedisError` from `exec()` (the whole transaction is aborted).
+
 ## Pub/sub
 
 ```grav
@@ -217,6 +223,10 @@ r.evalSha(sha, new Array<string>())
 let pool = new RedisPool(8, fn() -> RedisConnection { return RedisConnection.open(url) })
 pool.with(fn(r: RedisConnection) { r.incr("hits") })
 ```
+
+A connection handed back with a `MULTI` or a `WATCH` still open is reset
+before it is lent again; one that left nothing open goes back as it is, with
+no extra round trip.
 
 ## Errors
 
