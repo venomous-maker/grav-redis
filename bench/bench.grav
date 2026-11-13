@@ -1,0 +1,29 @@
+// bench.grav — the same work as bench.php (phpredis) and bench.py (redis-py),
+// against the same local server: see bench/README.md.
+import "std"
+import "../src/redis.grav"
+use redis.*
+
+fn main() {
+    let n = Integer.parseOr(argc() > 1 ? argv(1) : "20000", 20000) as int;
+    let url = argc() > 2 ? argv(2) : "redis://127.0.0.1:54400/9";
+    let r = RedisConnection.open(url);
+    r.flushDb();
+
+    let t0 = Time.nowMs();
+    for (i in 0..n) { r.set("k${i}", "v${i}"); }
+    let setMs = Time.nowMs() - t0;
+
+    let t1 = Time.nowMs();
+    let ok = 0;
+    for (i in 0..n) { if (r.get("k${i}") == "v${i}") { ok += 1; } }
+    let getMs = Time.nowMs() - t1;
+
+    let t2 = Time.nowMs();
+    r.pipeline(fn(p: RedisPipeline) { for (i in 0..n) { p.command("GET", ["k${i}"]); } });
+    let pipeMs = Time.nowMs() - t2;
+
+    print("grav-redis: set=${setMs}ms get=${getMs}ms pipelined_get=${pipeMs}ms checked=${ok}/${n}");
+    r.flushDb();
+    r.close();
+}
