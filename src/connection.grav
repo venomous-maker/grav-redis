@@ -34,6 +34,11 @@ namespace redis {
     class RedisConnection {
         private conn: TcpStream
         private closed: bool = false
+        // Server-side state a pool must clear before lending this connection again:
+        // a MULTI opened by a raw command("MULTI"), and keys watch()ed since the
+        // last EXEC/DISCARD/UNWATCH.
+        private inMulti: bool = false
+        private watching: bool = false
         public options: RedisOptions
 
         constructor(options: RedisOptions) {
@@ -107,7 +112,28 @@ namespace redis {
         // or an Array<any> (nested arrays included); RedisError for a `-ERR ...` one.
         fn command(name: string, args: Array<any> = new Array<any>()) -> any {
             Resp.writeCommand(self.conn, name, args);
+            self.track(name);
             return Resp.readReply(self.conn);
+        }
+        // Notes a command that opens or closes transaction state (whatever its
+        // reply: an EXEC that fails still ends the MULTI). Most commands are told
+        // apart by their length and first letter, with no upper-casing.
+        private fn track(name: string) {
+            let n = name.length;
+            if (n != 4 && n != 5 && n != 7) { return; }
+            let c = (name[0] as int) | 32;               // lower-cased first letter
+            if (c != 109 && c != 119 && c != 101 && c != 100 && c != 117) { return; }   // m w e d u
+            let u = Str.upper(name);
+            if (u == "MULTI") { self.inMulti = true; }
+            else if (u == "WATCH") { self.watching = true; }
+            else if (u == "EXEC" || u == "DISCARD") { self.inMulti = false; self.watching = false; }
+            else if (u == "UNWATCH") { self.watching = false; }
+        }
+        // Clears whatever a borrower left open (a MULTI, watched keys), so the next
+        // one starts clean; no round trip when there is nothing to clear.
+        fn reset() {
+            if (self.inMulti) { self.command("DISCARD"); }
+            else if (self.watching) { self.command("UNWATCH"); }
         }
 
         // ── pipelining: every command queued, then every reply read at once ──────
@@ -120,15 +146,38 @@ namespace redis {
         }
 
         // ── transactions (MULTI/EXEC) ─────────────────────────────────────────────
-        // Queues commands (each answered "QUEUED", not run) until exec() runs them
-        // all atomically, or discard() drops them. watch(keys) before multi() aborts
-        // the transaction (exec() gives null) if any of them changed first.
+        // Queues commands until exec() runs them all atomically, or discard() drops
+        // them. watch(keys) before multi() aborts the transaction (exec() gives
+        // null) if any of them changed first. The queue is kept on this side and
+        // sent as one MULTI ... EXEC batch at exec(): one round trip, not one per
+        // command — so a command the server rejects surfaces at exec(), and
+        // commands sent on the connection itself meanwhile run outside the
+        // transaction.
         fn watch(keys: Array<string>) { let a = new Array<any>(); for (k in keys) { a.push(k); } self.command("WATCH", a); }
         fn unwatch() { self.command("UNWATCH"); }
-        fn multi() -> RedisTransaction {
-            self.command("MULTI");
-            return new RedisTransaction(self);
+        fn multi() -> RedisTransaction { return new RedisTransaction(self); }
+        // Sends a transaction's batch (MULTI, its `queued` commands, EXEC) in one
+        // write and reads every reply: EXEC's array, or null when a watched key
+        // changed; the first RedisError among them once all are read. For
+        // RedisTransaction.exec().
+        fn execBatch(batch: StringBuilder, queued: int) -> Array<any> {
+            self.conn.write(batch.toString());
+            self.inMulti = false;
+            self.watching = false;
+            let failure: RedisError = null;
+            let result: any = null;
+            for (i in 0..(queued + 2)) {                         // MULTI's OK, each QUEUED, then EXEC's
+                try {
+                    let r = Resp.readReply(self.conn);
+                    if (i == queued + 1) { result = r; }
+                } catch (e: RedisError) { if (failure == null) { failure = e; } }
+            }
+            if (failure != null) { throw failure; }
+            return result == null ? null : result as Array<any>;
         }
+        // Drops a transaction that was never sent: nothing to tell the server but
+        // that its watched keys no longer matter.
+        fn discardBatch() { if (self.watching) { self.unwatch(); } }
         // Runs `f(tx)` as a MULTI/EXEC, retrying from watch() when a watched key
         // changed first (exec() gave null): `attempts` times, then StateError.
         fn transaction(watch: Array<string>, f: fn(RedisTransaction), attempts: int = 3) -> Array<any> {
@@ -417,17 +466,34 @@ namespace redis {
     }
 
     // Commands queued by multi(): exec() runs them all atomically (null when a
-    // watch()ed key changed first); discard() drops them instead.
+    // watch()ed key changed first); discard() drops them instead. Nothing goes to
+    // the server until exec(): MULTI, every command and EXEC go in one write.
     class RedisTransaction {
         private owner: RedisConnection
+        private buf: StringBuilder
         private queued: int = 0
-        constructor(owner: RedisConnection) { self.owner = owner; }
+        private done: bool = false
+        constructor(owner: RedisConnection) {
+            self.owner = owner;
+            self.buf = new StringBuilder();
+            Resp.encodeCommand(self.buf, "MULTI", new Array<any>());
+        }
         fn command(name: string, args: Array<any> = new Array<any>()) -> RedisTransaction {
-            self.owner.command(name, args);                     // answered "QUEUED"
+            if (self.done) { throw new StateError("this transaction already ran (or was discarded)"); }
+            Resp.encodeCommand(self.buf, name, args);
             self.queued += 1;
             return self;
         }
-        fn exec() -> Array<any> { return self.owner.command("EXEC") as Array<any>; }
-        fn discard() { self.owner.command("DISCARD"); }
+        fn exec() -> Array<any> {
+            if (self.done) { throw new StateError("this transaction already ran (or was discarded)"); }
+            self.done = true;
+            Resp.encodeCommand(self.buf, "EXEC", new Array<any>());
+            return self.owner.execBatch(self.buf, self.queued);
+        }
+        fn discard() {
+            if (self.done) { return; }
+            self.done = true;
+            self.owner.discardBatch();
+        }
     }
 }

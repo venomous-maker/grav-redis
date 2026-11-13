@@ -147,6 +147,33 @@ test "transactions: MULTI/EXEC, and a watched key aborting it" {
     r.close();
 }
 
+test "transactions: sent as one batch, errors at exec(), discard()" {
+    let r = fresh();
+    r.set("n", "1");
+    let tx = r.multi();
+    tx.command("INCR", ["n"]);
+    assertEq(r.get("n"), "1");                   // nothing sent before exec()
+    assertEq("${tx.exec()[0]}", "2");
+
+    // A command the server rejects aborts the whole transaction, at exec().
+    let bad = r.multi();
+    bad.command("INCR", ["n"]);
+    bad.command("NOSUCHCOMMAND");
+    let threw = false;
+    try { bad.exec(); } catch (e: RedisError) { threw = true; }
+    assertEq(threw, true);
+    assertEq(r.get("n"), "2");
+    assertEq(r.ping(), "PONG");                  // the connection is still in step
+
+    // discard() drops the queue and the watch.
+    r.watch(["n"]);
+    let dropped = r.multi();
+    dropped.command("INCR", ["n"]);
+    dropped.discard();
+    assertEq(r.get("n"), "2");
+    r.close();
+}
+
 test "pub/sub" {
     let publisher = RedisConnection.open(url());
     let received = new Array<string>();
