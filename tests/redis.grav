@@ -174,6 +174,25 @@ test "transactions: sent as one batch, errors at exec(), discard()" {
     r.close();
 }
 
+test "the pool resets only what a borrower left open" {
+    let pool = new RedisPool(1, fn() -> RedisConnection { return RedisConnection.open(url()); });
+    pool.with(fn(c: RedisConnection) { c.command("MULTI"); c.command("SET", ["left", "open"]); });
+    pool.with(fn(c: RedisConnection) {
+        assertEq(c.get("left"), null);           // the stray MULTI was discarded
+        c.watch(["left"]);
+    });
+    let other = RedisConnection.open(url());
+    other.set("left", "changed");                // would abort a transaction still watching it
+    pool.with(fn(c: RedisConnection) {
+        let tx = c.multi();
+        tx.command("SET", ["left", "mine"]);
+        assertEq(tx.exec() == null, false);      // the watch was cleared on release
+    });
+    assertEq(pool.opened(), 1);
+    other.close();
+    pool.close();
+}
+
 test "pub/sub" {
     let publisher = RedisConnection.open(url());
     let received = new Array<string>();

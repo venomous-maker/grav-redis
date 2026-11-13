@@ -42,10 +42,11 @@ namespace redis {
             }
             return c;
         }
-        // Takes back a connection from acquire(). One left mid-MULTI has it discarded.
+        // Takes back a connection from acquire(). One left mid-MULTI, or with keys
+        // still watched, is reset first (only then: no round trip otherwise).
         fn release(c: RedisConnection) {
             if (c.isOpen()) {
-                try { c.command("DISCARD"); } catch (e: RedisError) {}   // (harmless: "ERR DISCARD without MULTI" otherwise)
+                try { c.reset(); } catch (e: Exception) { c.close(); }   // a connection that can't be reset isn't lent again
             }
             self.lock.lock();
             if (c.isOpen()) { self.idle.push(c); }
