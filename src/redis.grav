@@ -1,0 +1,61 @@
+// redis.grav — Redis: the named connections a program uses, so code reaches
+// for a connection by name instead of passing one around.
+//
+//   Redis.connect(RedisConnection.open("redis://localhost:6379"))
+//   Redis.connect(RedisConnection.open("redis://localhost:6379/1"), "sessions")
+//   Redis.get("name")                        // on the default connection
+//   Redis.connection("sessions").set("sid:1", "...")
+import "std"
+import "connection.grav"
+import "pool.grav"
+
+namespace redis {
+
+    // The connections a program uses (see the top of this file).
+    class Redis {
+        private static named: HashMap<string, RedisConnection> = new HashMap<string, RedisConnection>()
+
+        // Makes `conn` the connection called `name` ("default" otherwise).
+        static fn connect(conn: RedisConnection, name: string = "default") { Redis.named.put(name, conn); }
+        // The connection called `name`; StateError when there is none.
+        static fn connection(name: string = "default") -> RedisConnection {
+            let key = name == "" ? "default" : name;
+            let c = Redis.named.getOr(key, null);
+            if (c == null) {
+                throw new StateError(key == "default" ? "no Redis connection: call Redis.connect(conn) first"
+                    : "no Redis connection called '" + key + "': Redis.connect(conn, \"" + key + "\")");
+            }
+            return c;
+        }
+        static fn hasConnection(name: string = "default") -> bool { return Redis.named.containsKey(name == "" ? "default" : name); }
+        // Forgets the connection called `name` (closing it is yours).
+        static fn disconnect(name: string = "default") { Redis.named.remove(name); }
+
+        // The default connection's command, for anything not forwarded below.
+        static fn command(name: string, args: Array<any> = new Array<any>()) -> any { return Redis.connection().command(name, args); }
+
+        // ── the most-used commands, forwarded to the default connection ─────────
+        static fn get(key: string) -> string? { return Redis.connection().get(key); }
+        static fn set(key: string, value: any, ex: long = 0, px: long = 0, nx: bool = false, xx: bool = false) -> bool {
+            return Redis.connection().set(key, value, ex, px, nx, xx);
+        }
+        static fn del(key: string) -> long { return Redis.connection().del(key); }
+        static fn exists(key: string) -> bool { return Redis.connection().exists(key); }
+        static fn expire(key: string, seconds: long) -> bool { return Redis.connection().expire(key, seconds); }
+        static fn ttl(key: string) -> long { return Redis.connection().ttl(key); }
+        static fn incr(key: string) -> long { return Redis.connection().incr(key); }
+        static fn decr(key: string) -> long { return Redis.connection().decr(key); }
+        static fn incrBy(key: string, by: long) -> long { return Redis.connection().incrBy(key, by); }
+        static fn hGet(key: string, field: string) -> string? { return Redis.connection().hGet(key, field); }
+        static fn hSet(key: string, field: string, value: any) -> long { return Redis.connection().hSet(key, field, value); }
+        static fn hGetAll(key: string) -> HashMap<string, string> { return Redis.connection().hGetAll(key); }
+        static fn lPush(key: string, value: any) -> long { return Redis.connection().lPush(key, value); }
+        static fn rPush(key: string, value: any) -> long { return Redis.connection().rPush(key, value); }
+        static fn sAdd(key: string, member: any) -> long { return Redis.connection().sAdd(key, member); }
+        static fn publish(channel: string, message: string) -> long { return Redis.connection().publish(channel, message); }
+        static fn pipeline(f: fn(RedisPipeline)) -> Array<any> { return Redis.connection().pipeline(f); }
+        static fn transaction(watch: Array<string>, f: fn(RedisTransaction), attempts: int = 3) -> Array<any> {
+            return Redis.connection().transaction(watch, f, attempts);
+        }
+    }
+}

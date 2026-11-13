@@ -1,0 +1,78 @@
+// pool.grav — a small pool of Redis connections, for programs with several
+// threads sharing one Redis server.
+//
+//   let pool = new RedisPool(8, fn() -> RedisConnection { return RedisConnection.open(url); })
+//   pool.with(fn(r: RedisConnection) { r.set("k", "v") })
+import "std"
+import "connection.grav"
+
+namespace redis {
+
+    class RedisPool {
+        private factory: fn() -> RedisConnection
+        private idle: Array<RedisConnection>
+        private lock: Mutex
+        private slots: Semaphore
+        private made: AtomicInt
+        // The most connections it opens.
+        public max: int
+
+        constructor(max: int, factory: fn() -> RedisConnection) {
+            if (max < 1) { throw new ValueError("a pool needs at least one connection"); }
+            self.factory = factory;
+            self.idle = new Array<RedisConnection>();
+            self.lock = new Mutex();
+            self.slots = new Semaphore(max);
+            self.made = new AtomicInt(0);
+            self.max = max;
+        }
+        // A connection for this thread (waits while all are lent out); give it back with release().
+        fn acquire() -> RedisConnection {
+            self.slots.acquire();
+            self.lock.lock();
+            let c: RedisConnection = null;
+            while (self.idle.size() > 0 && c == null) {
+                let x = self.idle.pop();
+                if (x.isOpen()) { c = x; }
+            }
+            self.lock.unlock();
+            if (c == null) {
+                try { c = self.factory(); } catch (e: Exception) { self.slots.release(); throw e; }
+                self.made.increment();
+            }
+            return c;
+        }
+        // Takes back a connection from acquire(). One left mid-MULTI has it discarded.
+        fn release(c: RedisConnection) {
+            if (c.isOpen()) {
+                try { c.command("DISCARD"); } catch (e: RedisError) {}   // (harmless: "ERR DISCARD without MULTI" otherwise)
+            }
+            self.lock.lock();
+            if (c.isOpen()) { self.idle.push(c); }
+            self.lock.unlock();
+            self.slots.release();
+        }
+        // Lends a connection to `body`, taking it back afterwards (also when body throws).
+        fn with(body: fn(RedisConnection)) {
+            let c = self.acquire();
+            try { body(c); } catch (e: Exception) { self.release(c); throw e; }
+            self.release(c);
+        }
+        // Connections opened so far.
+        fn opened() -> int { return self.made.get() as int; }
+        // Connections waiting to be lent.
+        fn idleCount() -> int {
+            self.lock.lock();
+            let n = self.idle.size();
+            self.lock.unlock();
+            return n;
+        }
+        // Closes the idle connections (lent ones close when they come back).
+        fn close() {
+            self.lock.lock();
+            for (c in self.idle) { c.close(); }
+            self.idle.clear();
+            self.lock.unlock();
+        }
+    }
+}
