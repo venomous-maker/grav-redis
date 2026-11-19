@@ -316,7 +316,7 @@ namespace redis {
         }
         fn mSet(values: HashMap<string, any>) {
             let a = new Array<any>();
-            for (k in values.keys()) { a.push(k); a.push(values[k]); }
+            for ((k, v) in values) { a.push(k); a.push(v); }
             self.command("MSET", a);
         }
         fn setBit(key: string, offset: long, value: int) -> long { return RedisConnection.toLong(self.command("SETBIT", [key, offset, value]), 0); }
@@ -328,7 +328,7 @@ namespace redis {
         fn hSet(key: string, field: string, value: any) -> long { return RedisConnection.toLong(self.command("HSET", [key, field, value]), 0); }
         fn hSet(key: string, values: HashMap<string, any>) -> long {
             let a = new Array<any>(); a.push(key);
-            for (k in values.keys()) { a.push(k); a.push(values[k]); }
+            for ((k, v) in values) { a.push(k); a.push(v); }
             return RedisConnection.toLong(self.command("HSET", a), 0);
         }
         fn hSetNx(key: string, field: string, value: any) -> bool { return self.command("HSETNX", [key, field, value]) == 1; }
@@ -400,7 +400,7 @@ namespace redis {
         fn zAdd(key: string, score: double, member: any) -> long { return RedisConnection.toLong(self.command("ZADD", [key, score, member]), 0); }
         fn zAdd(key: string, scored: HashMap<string, double>) -> long {
             let a = new Array<any>(); a.push(key);
-            for (m in scored.keys()) { a.push(scored[m]); a.push(m); }
+            for ((m, score) in scored) { a.push(score); a.push(m); }
             return RedisConnection.toLong(self.command("ZADD", a), 0);
         }
         fn zRem(key: string, members: Array<any>) -> long { let a = new Array<any>(); a.push(key); for (m in members) { a.push(m); } return RedisConnection.toLong(self.command("ZREM", a), 0); }
