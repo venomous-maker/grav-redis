@@ -1,5 +1,6 @@
 name = "grav-redis"
 lib = "src/redis.grav"
+grav = ">=1.7.0"
 paths = ["src"]
 
 [dependencies]
