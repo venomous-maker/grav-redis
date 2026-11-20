@@ -6,6 +6,11 @@ compiler versions it builds with.
 
 ## Unreleased
 
+### Requirements
+
+- Needs grav 1.9.0 or later, and uses the 0.2.0 releases of the packages it
+  depends on.
+
 ### Keys
 
 - `scanAll(pattern, count)`: every matching key as a `for` loop, SCAN by SCAN
