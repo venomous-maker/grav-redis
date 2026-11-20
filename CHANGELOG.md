@@ -6,6 +6,8 @@ compiler versions it builds with.
 
 ## Unreleased
 
+## 0.2.1 (2026-11-20)
+
 ### Performance
 
 - Encoding a command writes `\r\n` as two bytes instead of appending a
