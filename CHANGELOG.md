@@ -6,6 +6,14 @@ compiler versions it builds with.
 
 ## Unreleased
 
+### Performance
+
+- Encoding a command writes `\r\n` as two bytes instead of appending a
+  string, and reading a reply's length reads the line's length once: with
+  grav 1.10's `StringBuilder.appendInt` (no string made for the digits), the
+  benchmark's 15,000 commands take 12% fewer instructions (75.5M to 66.1M).
+  Round trips to the server still decide the time of unpipelined commands.
+
 ## 0.2.0 (2026-11-20)
 
 ### Requirements
