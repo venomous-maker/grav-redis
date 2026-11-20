@@ -118,6 +118,8 @@ while (true) {
     cursor = step.first
     if (cursor == 0) { break }
 }
+// The same walk as a loop: SCAN runs as the loop asks for more keys.
+for (k in r.scanAll("user:*", 100)) { print(k) }
 ```
 
 ## Hashes, lists, sets, sorted sets

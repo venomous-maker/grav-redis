@@ -57,6 +57,9 @@ test "keys: scan, rename, randomkey, copy" {
         if (cursor == 0) { break; }
     }
     assertEq("${seen.size()} ${seen.contains("k1")} ${seen.contains("k2")} ${seen.contains("k3")}", "3 true true true");
+    let walked = new HashSet<string>();
+    for (k in r.scanAll("k*", 1)) { walked.add(k); }
+    assertEq(walked.size(), 3);
     r.rename("k1", "k1renamed");
     assertEq("${r.exists("k1")} ${r.get("k1renamed")}", "false a");
     assertEq(r.copy("k2", "k2copy"), true);

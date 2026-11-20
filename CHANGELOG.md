@@ -6,6 +6,11 @@ compiler versions it builds with.
 
 ## Unreleased
 
+### Keys
+
+- `scanAll(pattern, count)`: every matching key as a `for` loop, SCAN by SCAN
+  without blocking the server.
+
 ## 0.1.0 (2026-11-19)
 
 The first tagged release. Needs grav 1.7.0 or newer.

@@ -271,6 +271,10 @@ namespace redis {
             let r = self.command("SCAN", [cursor, "MATCH", pattern, "COUNT", count]) as Array<any>;
             return new Pair<long, Array<string>>(RedisConnection.toLong(r[0], 0), RedisConnection.strings(r[1] as Array<any>));
         }
+        // Every key matching `pattern`, SCAN by SCAN (`count` a step) without blocking
+        // the server, as a loop asks for them: `for (k in r.scanAll("user:*"))`. A key
+        // may come twice, as with SCAN itself.
+        fn scanAll(pattern: string = "*", count: int = 100) -> KeyScan { return new KeyScan(self, pattern, count); }
         fn rename(key: string, newKey: string) { self.command("RENAME", [key, newKey]); }
         fn renameNx(key: string, newKey: string) -> bool { return self.command("RENAMENX", [key, newKey]) == 1; }
         fn randomKey() -> string { return RedisConnection.orEmpty(self.command("RANDOMKEY")); }
@@ -494,6 +498,34 @@ namespace redis {
             if (self.done) { return; }
             self.done = true;
             self.owner.discardBatch();
+        }
+    }
+
+    // The keys a SCAN walk finds, fetched a step at a time (see RedisConnection.scanAll).
+    class KeyScan implements Iterator<string> {
+        private r: RedisConnection
+        private pattern: string
+        private count: int
+        private cursor: long = 0
+        private started: bool = false
+        private batch: Array<string> = new Array<string>()
+        private at: int = 0
+        constructor(r: RedisConnection, pattern: string, count: int) { self.r = r; self.pattern = pattern; self.count = count; }
+        fn hasNext() -> bool {
+            while (self.at >= self.batch.size()) {
+                if (self.started && self.cursor == 0) { return false; }
+                let step = self.r.scan(self.cursor, self.pattern, self.count);
+                self.started = true;
+                self.cursor = step.first;
+                self.batch = step.second;
+                self.at = 0;
+            }
+            return true;
+        }
+        fn next() -> string {
+            if (!self.hasNext()) { throw new StateError("scanAll: no more keys"); }
+            self.at += 1;
+            return self.batch[self.at - 1];
         }
     }
 }
