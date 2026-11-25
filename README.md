@@ -8,7 +8,7 @@ extension runtime underneath it: about an eighth of phpredis's or redis-py's
 memory for the same work, and comparable or better speed — see
 [bench/](bench/).
 
-```grav
+```typescript
 import "std"
 import "grav-redis"
 
@@ -44,14 +44,14 @@ grav add /path/to/grav-redis          # or: grav add github.com/venomous-maker/g
 grav-redis = "github.com/venomous-maker/grav-redis"
 ```
 
-```grav
+```typescript
 import "grav-redis"
 use redis.*
 ```
 
 ## Connecting
 
-```grav
+```typescript
 let r = RedisConnection.open("redis://127.0.0.1:6379/0")
 let r = RedisConnection.open("redis://user:password@host:6379/2")
 let r = RedisConnection.open("redis://:password@host/0")       // no username
@@ -71,7 +71,7 @@ if a hung connection should fail instead of blocking.
 **Named connections**, for code that reaches for one by name instead of
 passing it around:
 
-```grav
+```typescript
 Redis.connect(RedisConnection.open("redis://localhost:6379"))
 Redis.connect(RedisConnection.open("redis://localhost:6379/1"), "sessions")
 Redis.get("name")                         // the default connection
@@ -80,7 +80,7 @@ Redis.connection("sessions").set("sid:1", "...")
 
 ## Strings
 
-```grav
+```typescript
 r.set("name", "Ada")
 r.set("temp", "x", 60)                    // EX: expires in 60 seconds
 r.set("temp", "x", 0, 500)                // PX: 500 milliseconds
@@ -98,7 +98,7 @@ r.mSet(values)                            // HashMap<string, any>
 
 ## Keys
 
-```grav
+```typescript
 r.del("a")                      // del(["a", "b", ...]) too
 r.exists("a")                   // bool; exists(["a", "b"]) -> how many
 r.expire("a", 60)               // pExpire (ms), expireAt (unix seconds)
@@ -124,7 +124,7 @@ for (k in r.scanAll("user:*", 100)) { print(k) }
 
 ## Hashes, lists, sets, sorted sets
 
-```grav
+```typescript
 r.hSet("user:1", "name", "Ada")
 r.hSet("user:1", values)                 // several at once (HashMap<string, any>)
 r.hGet("user:1", "name")
@@ -155,7 +155,7 @@ wrapped: `command(name, args)` sends it and gives back the reply as a plain
 value (a string, a long, null, or an `Array<any>` for a multi-bulk reply),
 throwing `RedisError` for a `-ERR ...` one.
 
-```grav
+```typescript
 r.command("OBJECT", ["ENCODING", "name"])
 r.command("CLIENT", ["GETNAME"])
 r.command("CONFIG", ["GET", "maxmemory"])
@@ -167,7 +167,7 @@ Queues every command and sends them in one batch (one `write()`, not one per
 command), then reads every reply: much faster than one round trip each when
 the replies are not needed until they are all in.
 
-```grav
+```typescript
 let results = r.pipeline(fn(p: RedisPipeline) {
     for (i in 0..1000) { p.command("INCR", ["counter:${i}"]) }
 })
@@ -175,7 +175,7 @@ let results = r.pipeline(fn(p: RedisPipeline) {
 
 ## Transactions
 
-```grav
+```typescript
 let out = r.transaction(new Array<string>(), fn(tx: RedisTransaction) {
     tx.command("DECRBY", ["from", "10"])
     tx.command("INCRBY", ["to", "10"])
@@ -202,7 +202,7 @@ outside the transaction, and a command the server rejects surfaces as a
 
 ## Pub/sub
 
-```grav
+```typescript
 r.publish("news", "hello")
 
 // subscribe()/psubscribe() block forever, calling the function for each
@@ -213,7 +213,7 @@ r.psubscribe(["news.*"], fn(pattern: string, channel: string, message: string) {
 
 ## Scripting
 
-```grav
+```typescript
 r.eval("return redis.call('SET', KEYS[1], ARGV[1])", ["key"], ["value"])
 let sha = r.scriptLoad("return 1")
 r.evalSha(sha, new Array<string>())
@@ -221,7 +221,7 @@ r.evalSha(sha, new Array<string>())
 
 ## A pool, for several threads sharing one server
 
-```grav
+```typescript
 let pool = new RedisPool(8, fn() -> RedisConnection { return RedisConnection.open(url) })
 pool.with(fn(r: RedisConnection) { r.incr("hits") })
 ```
