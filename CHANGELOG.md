@@ -6,6 +6,8 @@ compiler versions it builds with.
 
 ## Unreleased
 
+## 0.2.2 (2026-11-28)
+
 ### Fixes
 
 - A `RedisConnection` shared by several threads is safe: each command, pipeline and transaction batch
