@@ -6,6 +6,15 @@ compiler versions it builds with.
 
 ## Unreleased
 
+### Fixes
+
+- A `RedisConnection` shared by several threads is safe: each command, pipeline and transaction batch
+  is one round trip under the connection's lock, so every reply reaches the thread that asked for it.
+  Before, two threads could read each other's replies ("not a RESP reply", wrong values) or wait
+  forever for one: a cache, session or queue-dashboard store built on one connection broke under a
+  multi-threaded server or queue worker. WATCHed keys and subscriptions are still the connection's
+  own: give those a connection from a `RedisPool`.
+
 ## 0.2.1 (2026-11-20)
 
 ### Performance

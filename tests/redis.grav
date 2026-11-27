@@ -244,3 +244,27 @@ test "RedisError for a bad command, and bad-URL errors" {
     assertEq(bad, "not a Redis URL (redis://[:password@]host:port/database): http://x");
     r.close();
 }
+
+test "one connection shared by threads: each command gets its own reply" {
+    let r = RedisConnection.open(url())
+    for (t in 0..8) { r.set("gr:shared:" + str(t), "value-" + str(t)) }
+    let wrong = new AtomicInt(0)
+    let done = new AtomicInt(0)
+    let threads = new Array<Thread>()
+    for (t in 0..8) {
+        threads.push(Thread.spawn(fn() {
+            for (i in 0..2000) {
+                let v = r.get("gr:shared:" + str(t))
+                if (v != "value-" + str(t)) { wrong.increment() }
+                // pipelines too: both replies are this thread's
+                let both = r.pipeline(fn(p: RedisPipeline) { p.command("GET", ["gr:shared:" + str(t)]); p.command("ECHO", ["e" + str(t)]) })
+                if (str(both[0]) != "value-" + str(t) || str(both[1]) != "e" + str(t)) { wrong.increment() }
+            }
+            done.increment()
+        }))
+    }
+    for (th in threads) { th.join() }
+    assertEq(done.get(), 8 as long)
+    assertEq(wrong.get(), 0 as long)
+    for (t in 0..8) { r.del(["gr:shared:" + str(t)]) }
+}

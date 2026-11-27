@@ -31,8 +31,15 @@ namespace redis {
 
     // One TCP connection to a Redis server, and the protocol state (a MULTI in
     // progress, an active subscription) that belongs to it alone.
+    // Safe to share between threads: each command, pipeline and transaction batch is
+    // one round trip under the connection's lock, so a reply always reaches the
+    // thread that asked. (What a connection remembers between commands, WATCHed keys
+    // and a subscription, is still the connection's: give those a connection of
+    // their own, from a RedisPool.)
     class RedisConnection {
         private conn: TcpStream
+        // One round trip at a time (see the class comment).
+        private io: Mutex = new Mutex()
         private closed: bool = false
         // Server-side state a pool must clear before lending this connection again:
         // a MULTI opened by a raw command("MULTI"), and keys watch()ed since the
@@ -111,9 +118,12 @@ namespace redis {
         // a string already one), and reads the one reply: a string, a long, null,
         // or an Array<any> (nested arrays included); RedisError for a `-ERR ...` one.
         fn command(name: string, args: Array<any> = new Array<any>()) -> any {
-            Resp.writeCommand(self.conn, name, args);
-            self.track(name);
-            return Resp.readReply(self.conn);
+            self.io.lock();
+            try {
+                Resp.writeCommand(self.conn, name, args);
+                self.track(name);
+                return Resp.readReply(self.conn);
+            } finally { self.io.unlock(); }
         }
         // Notes a command that opens or closes transaction state (whatever its
         // reply: an EXEC that fails still ends the MULTI). Most commands are told
@@ -141,6 +151,7 @@ namespace redis {
         // after one round trip instead of one per command.
         fn pipeline(f: fn(RedisPipeline)) -> Array<any> {
             let p = new RedisPipeline(self.conn);
+            p.io = self.io;
             f(p);
             return p.flush();
         }
@@ -161,17 +172,20 @@ namespace redis {
         // changed; the first RedisError among them once all are read. For
         // RedisTransaction.exec().
         fn execBatch(batch: StringBuilder, queued: int) -> Array<any> {
-            self.conn.write(batch.toString());
-            self.inMulti = false;
-            self.watching = false;
             let failure: RedisError = null;
             let result: any = null;
-            for (i in 0..(queued + 2)) {                         // MULTI's OK, each QUEUED, then EXEC's
-                try {
-                    let r = Resp.readReply(self.conn);
-                    if (i == queued + 1) { result = r; }
-                } catch (e: RedisError) { if (failure == null) { failure = e; } }
-            }
+            self.io.lock();
+            try {
+                self.conn.write(batch.toString());
+                self.inMulti = false;
+                self.watching = false;
+                for (i in 0..(queued + 2)) {                     // MULTI's OK, each QUEUED, then EXEC's
+                    try {
+                        let r = Resp.readReply(self.conn);
+                        if (i == queued + 1) { result = r; }
+                    } catch (e: RedisError) { if (failure == null) { failure = e; } }
+                }
+            } finally { self.io.unlock(); }
             if (failure != null) { throw failure; }
             return result == null ? null : result as Array<any>;
         }
@@ -447,6 +461,8 @@ namespace redis {
         // batch at flush(), not one per command).
         private buf: StringBuilder
         private n: int = 0
+        // The connection's lock, held for the whole write-and-read (set by pipeline()).
+        public io: Mutex = null
         constructor(conn: TcpStream) { self.conn = conn; self.buf = new StringBuilder(); }
         fn command(name: string, args: Array<any> = new Array<any>()) -> RedisPipeline {
             Resp.encodeCommand(self.buf, name, args);
@@ -456,14 +472,18 @@ namespace redis {
         // Sends every queued command in one write(), then reads every reply, in
         // order; a RedisError among them is thrown once all replies are read.
         fn flush() -> Array<any> {
-            self.conn.write(self.buf.toString());
             let out = new Array<any>();
             out.reserve(self.n);
             let failure: RedisError = null;
-            for (i in 0..self.n) {
-                try { out.push(Resp.readReply(self.conn)); }
-                catch (e: RedisError) { out.push(null); if (failure == null) { failure = e; } }
-            }
+            let lock = self.io;
+            if (lock != null) { lock.lock(); }
+            try {
+                self.conn.write(self.buf.toString());
+                for (i in 0..self.n) {
+                    try { out.push(Resp.readReply(self.conn)); }
+                    catch (e: RedisError) { out.push(null); if (failure == null) { failure = e; } }
+                }
+            } finally { if (lock != null) { lock.unlock(); } }
             if (failure != null) { throw failure; }
             return out;
         }
